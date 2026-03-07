@@ -1,7 +1,4 @@
-"""
-Project Indexer OPTIMISÉ - Réutilise dependency_graph.py
-Évite la duplication en utilisant le travail déjà fait par dependency_graph
-"""
+
 from pathlib import Path
 from typing import Dict, List, Any, Set
 import json
@@ -52,7 +49,7 @@ class ProjectIndexer:
         if not force_rebuild and self._load_from_cache():
             return self.context
         
-        print("🔍 Indexation du projet...")
+        print(" Indexation du projet...")
         
         # Si pas de graphe fourni, le construire
         if dependency_graph is None:
@@ -63,7 +60,7 @@ class ProjectIndexer:
         file_entities = dependency_builder.file_entities
         file_imports = dependency_builder.file_imports
         
-        print(f"   • {len(file_entities)} fichiers indexés")
+        print(f" {len(file_entities)} fichiers indexés")
         
         # Analyser l'architecture
         architecture_info = dependency_builder.analyze_flows()
@@ -132,7 +129,7 @@ class ProjectIndexer:
         # Sauvegarder dans cache
         self._save_to_cache()
         
-        print(f"✅ Indexation terminée : {self.context.total_files} fichiers\n")
+        print(f" Indexation terminée : {self.context.total_files} fichiers\n")
         
         return self.context
     
@@ -193,7 +190,7 @@ class ProjectIndexer:
         with open(self.cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache_data, f, indent=2)
         
-        print(f"💾 Cache sauvegardé : {self.cache_file}")
+        print(f" Cache sauvegardé : {self.cache_file}")
     
     def _load_from_cache(self) -> bool:
         """Charge le contexte depuis le cache"""
@@ -206,11 +203,11 @@ class ProjectIndexer:
             
             self.context = ProjectContext(**cache_data)
             
-            print(f"✅ Index chargé depuis cache : {self.context.total_files} fichiers\n")
+            print(f" Index chargé depuis cache : {self.context.total_files} fichiers\n")
             return True
         
         except Exception as e:
-            print(f"⚠️  Erreur chargement cache : {e}")
+            print(f"  Erreur chargement cache : {e}")
             return False
     
     # Suffixes par langage pour détection universelle
@@ -416,13 +413,13 @@ class ProjectIndexer:
                     
                     lines.append("")
         
-        lines.append("=" * 70)
-        lines.append("⚠️  IMPORTANT:")
+       
+        lines.append("  IMPORTANT:")
         lines.append("• These files/packages ALREADY EXIST in the project")
         lines.append("• Do NOT suggest creating new files/classes that exist")
         lines.append("• Suggest using EXISTING entities shown above")
         lines.append("• Follow the existing project structure and packages")
-        lines.append("=" * 70)
+       
         
         return "\n".join(lines)
     

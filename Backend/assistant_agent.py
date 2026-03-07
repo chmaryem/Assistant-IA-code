@@ -8,7 +8,7 @@ from typing import Any
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI  # ← CHANGÉ (était ChatGroq)
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -52,16 +52,16 @@ class CodeRAGSystemAPI:
 
 
     def __init__(self) -> None:
-        self.embeddings:   HuggingFaceEmbeddings | None = None
-        self.vector_store: Chroma                | None = None
-        self.llm:          ChatGroq              | None = None
+        self.embeddings:   HuggingFaceEmbeddings       | None = None
+        self.vector_store: Chroma                      | None = None
+        self.llm:          ChatGoogleGenerativeAI      | None = None 
         self._initialize()
 
+
     def _initialize(self) -> None:
-     
+        """Initialise les 3 composants : Embeddings, ChromaDB, Google Gemini"""
         logger.info("Initialisation CodeRAGSystemAPI...")
 
-        #1. Embeddings Jina v2 
         logger.info("Chargement embeddings : %s (device=%s)",
                     config.rag.embedding_model, config.rag.embedding_device)
         self.embeddings = HuggingFaceEmbeddings(
@@ -76,7 +76,7 @@ class CodeRAGSystemAPI:
             },
         )
 
-        # 2. ChromaDB
+        # ── 2. ChromaDB (INCHANGÉ) ────────────────────────────────────────
         self.vector_store = Chroma(
             persist_directory  = str(config.VECTOR_STORE_DIR),
             embedding_function = self.embeddings,
@@ -94,21 +94,22 @@ class CodeRAGSystemAPI:
             logger.info("Collection '%s' : %d chunks disponibles",
                         config.CHROMA_COLLECTION, chunk_count)
 
-        #  3. LLM Groq 
-        api_key = os.getenv("GROQ_API_KEY")
+        api_key = os.getenv("GOOGLE_API_KEY")  
         if not api_key:
-            logger.warning("GROQ_API_KEY non défini — les analyses LLM échoueront")
+            logger.warning("GOOGLE_API_KEY non défini — les analyses LLM échoueront")
 
-        self.llm = ChatGroq(
-            model        = config.api.model,
-            temperature  = config.api.temperature,  
-            api_key      = api_key or "placeholder",
-            max_tokens   = config.api.max_tokens,
+      
+        self.llm = ChatGoogleGenerativeAI(
+            model=config.api.model,                     
+            temperature=config.api.temperature,           
+            google_api_key=api_key or "placeholder",
+            max_output_tokens=config.api.max_tokens,    
+            convert_system_message_to_human=True        
         )
 
-        logger.info("CodeRAGSystemAPI initialisé ")
+        logger.info("Google Gemini initialisé ✓")  # ← CHANGÉ message
 
-    # Retrieval RAG filtré
+
 
     def _retrieve_relevant_knowledge(
         self,
@@ -234,16 +235,16 @@ class CodeRAGSystemAPI:
         if not _has_security_patterns(code, language):
            return ""
 
-    # Détecter toutes les méthodes contenant des patterns dangereux
+        # Détecter toutes les méthodes contenant des patterns dangereux
         import re
         method_pattern = re.compile(
              r'(public|private|protected)\s+\w[\w<>]*\s+(\w+)\s*\([^)]*\)',
              re.MULTILINE
-    )
+        )
         methods = [m.group(2) for m in method_pattern.finditer(code)]
 
         return f"""
-         SECURITY SCAN MODE — EXHAUSTIVE ANALYSIS REQUIRED
+SECURITY SCAN MODE — EXHAUSTIVE ANALYSIS REQUIRED
 
 You MUST scan these {len(methods)} methods individually: {', '.join(methods)}
 
@@ -355,7 +356,7 @@ RULES:
 5. {"NO breaking changes (no renaming public methods/classes) — criticality is HIGH." if criticality > 3 else "Breaking changes acceptable with justification."}
 6. {issue_limit}
 7. Only suggest libraries that are already in the project imports. Never invent dependencies.
-8. If code is correct: respond with exactly " Code quality is good, no major issues."
+8. If code is correct: respond with exactly "✅ Code quality is good, no major issues."
 
 FORMAT (one block per issue):
 
@@ -430,7 +431,7 @@ ANALYZE:"""
         except Exception as e:
             logger.error("Erreur LLM lors de l'analyse de %s : %s",
                          context.get("file_path", "?"), e)
-            analysis = f" Error: {e}\n\nVérifiez votre GROQ_API_KEY."
+            analysis = f"❌ Error: {e}\n\nVérifiez votre GOOGLE_API_KEY."  # ← CHANGÉ message
 
         return {
             "analysis":           analysis,
@@ -452,7 +453,7 @@ ANALYZE:"""
         if not analysis_results:
             return (
                 "\n══ PLAN DE REFACTORING ══\n\n"
-                "AUCUN FICHIER ANALYSÉ\n\n"
+                "⚠️  AUCUN FICHIER ANALYSÉ\n\n"
                 "Vérifiez que le projet contient des fichiers .py, .js, .ts, .java\n"
                 "et qu'ils ne sont pas dans des dossiers exclus.\n"
             )
@@ -536,7 +537,7 @@ PLAN:"""
             return response.content if hasattr(response, "content") else str(response)
         except Exception as e:
             logger.error("Erreur génération plan refactoring : %s", e)
-            return f" Erreur lors de la génération du plan: {e}"
+            return f"❌ Erreur lors de la génération du plan: {e}"
 
 
 

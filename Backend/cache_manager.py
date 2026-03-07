@@ -13,7 +13,7 @@ class CacheManager:
     def __init__(self, cache_dir: Path = None):
         """
         Args:
-            cache_dir: Répertoire de stockage du cache (par défaut: config.CACHE_DIR)
+            cache_dir: Répertoire de stockage du cache 
         """
         self.cache_dir = cache_dir or config.CACHE_DIR
         self.cache_file = self.cache_dir / "analysis_cache.pkl"

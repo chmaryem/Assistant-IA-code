@@ -1,5 +1,4 @@
 """
-Incremental Analyzer - VERSION FINALE AVEC INDEXATION PROJET
 Analyse uniquement les changements significatifs + Contexte projet complet
 """
 from pathlib import Path
@@ -15,12 +14,10 @@ from code_parser import parser
 from assistant_agent import assistant_agent
 from dependency_graph import dependency_builder
 from cache_manager import CacheManager
-from project_indexer import get_project_index  # NOUVEAU
+from project_indexer import get_project_index 
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Codes ANSI — activés sur Windows PowerShell sans dépendance externe
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 def _enable_windows_ansi():
     try:
@@ -39,14 +36,14 @@ _BD = "\033[1m"       # bold
 _DM = "\033[2m"       # dim
 _RD = "\033[91m"      # rouge
 _GR = "\033[92m"      # vert
-_YL = "\033[93m"      # jaune
-_CY = "\033[96m"      # cyan
-_GY = "\033[90m"      # gris
-_OR = "\033[38;5;208m"  # orange
+_YL = "\033[93m"      
+_CY = "\033[96m"     
+_GY = "\033[90m"     
+_OR = "\033[38;5;208m"
 
 _W   = 72
-_SEP = "\u2500" * _W   # ─────
-_SEP2= "\u2550" * _W   # ═════
+_SEP = "\u2500" * _W   
+_SEP2= "\u2550" * _W   
 
 _SEV = {
     "CRITICAL": (_RD,  "\U0001f534", "CRITIQUE"),
@@ -56,9 +53,6 @@ _SEV = {
 }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Parser inline — extrait les blocs ---FIX START--- / ---FIX END---
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _parse_fix_blocks(text: str) -> list:
     """Parse les blocs LLM. Aucune dépendance externe."""
@@ -145,16 +139,13 @@ def _print_block(block: dict, file_name: str) -> None:
 def _print_results(text: str, file_name: str, context: dict,
                    elapsed: float, analyzed_count: int, score: int,
                    impacted: list) -> None:
-    """
-    Remplace le bloc '# RÉSULTATS COMPACTS' de _analyze_file().
-    Parse les blocs LLM et affiche un tableau de bord compact.
-    """
+   
     blocks = _parse_fix_blocks(text)
     counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
     for b in blocks:
         counts[b["severity"]] = counts.get(b["severity"], 0) + 1
 
-    # ── Barre de statut ───────────────────────────────────────────────────────
+    
     from datetime import datetime
     now = datetime.now().strftime("%H:%M:%S")
     hc  = _RD if counts["CRITICAL"] else _OR if counts["HIGH"] else _YL if counts["MEDIUM"] else _GR
@@ -174,7 +165,7 @@ def _print_results(text: str, file_name: str, context: dict,
     print("  " + f"  {_DM}\u2502{_R}  ".join(parts))
     print(f"{_DM}{_SEP}{_R}")
 
-    # ── Cas code correct ──────────────────────────────────────────────────────
+
     if not blocks:
         clean = text.strip()
         if any(k in clean for k in ("\u2705", "no major issues", "code quality is good")):
@@ -185,12 +176,12 @@ def _print_results(text: str, file_name: str, context: dict,
         print(f"  {_DM}{elapsed:.1f}s  \u2502  Analysés : {analyzed_count}{_R}\n")
         return
 
-    # ── Blocs de diagnostic ───────────────────────────────────────────────────
+   
     for block in blocks:
         print(_SEP)
         _print_block(block, file_name)
 
-    # ── Footer d'impact ───────────────────────────────────────────────────────
+  
     print(f"\n{_DM}{_SEP}{_R}")
     if impacted:
         names = ", ".join(Path(p).name for p in impacted[:4])
@@ -200,9 +191,6 @@ def _print_results(text: str, file_name: str, context: dict,
     print(f"  {_DM}{elapsed:.1f}s  \u2502  Analysés : {_BD}{analyzed_count}{_R}\n")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ChangeAnalyzer — identique à l'original
-# ─────────────────────────────────────────────────────────────────────────────
 
 class ChangeAnalyzer:
     """Analyse l'importance d'un changement pour décider s'il faut analyser"""
@@ -271,10 +259,6 @@ class ChangeAnalyzer:
         }
         return reasons.get(change_type, f"Changement important ({lines_changed} ligne(s))")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# IncrementalAnalyzer — logique 100% identique, seul l'affichage change
-# ─────────────────────────────────────────────────────────────────────────────
 
 class IncrementalAnalyzer:
     """Analyseur incrémental INTELLIGENT avec contexte projet"""
@@ -520,3 +504,4 @@ class IncrementalAnalyzer:
             avg = self.stats['time_total'] / self.stats['analyzed']
             print(f"\n   Temps moyen : {avg:.1f}s")
         print()
+        

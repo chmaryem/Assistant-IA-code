@@ -60,7 +60,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Ajouter le répertoire parent au path pour importer config
 sys.path.insert(0, str(Path(__file__).parent))
 
 from langchain_chroma import Chroma
@@ -78,9 +77,7 @@ logging.basicConfig(
 logger = logging.getLogger("knowledge_loader")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Constantes
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 # Mapping chemin → métadonnées déduits automatiquement
 # Format : "segment_du_chemin" → valeur de métadonnée
@@ -175,7 +172,7 @@ def metadata_from_path(file_path: Path, kb_root: Path) -> dict[str, str]:
 
     Exemple :
       knowledge_base/java/security/sql_injection.md
-      → {"language": "java", "category": "security", "source_file": "sql_injection.md"}
+     {"language": "java", "category": "security", "source_file": "sql_injection.md"}
     """
     try:
         rel = file_path.relative_to(kb_root)
@@ -225,7 +222,7 @@ class KnowledgeBaseLoader:
         self._embeddings: HuggingFaceEmbeddings | None = None
         self._store:       Chroma | None               = None
 
-    # ── Initialisation lazy des embeddings (lourds à charger) ────────────────
+  
 
     def _get_embeddings(self) -> HuggingFaceEmbeddings:
         if self._embeddings is None:
@@ -253,8 +250,7 @@ class KnowledgeBaseLoader:
             )
         return self._store
 
-    # ── Scan des fichiers ─────────────────────────────────────────────────────
-
+   
     def scan_files(self) -> list[Path]:
         """Retourne tous les .md et .txt dans la knowledge base."""
         if not self.kb_dir.exists():
@@ -481,9 +477,7 @@ class KnowledgeBaseLoader:
         print(f"{'─' * 60}\n")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Point d'entrée CLI
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(

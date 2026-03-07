@@ -1,30 +1,3 @@
-"""
-dependency_graph.py — Graphe de dépendances avec résolution d'imports multi-stratégie
-=======================================================================================
-Nouveautés vs l'original :
-
-RÉSOLUTION D'IMPORTS (MultiStrategyImportResolver) :
-  • Python absolu   → recherche dans racine projet + sys.path simulé
-  • Python relatif  → résolution correcte des niveaux (from ..module import X)
-  • JavaScript/TS   → algorithme Node.js : ./foo → foo.js / foo/index.js / package.json
-  • CommonJS require() → même algorithme que ES imports
-  • Java            → mapping package.ClassName → src/main/java/package/ClassName.java
-  • Fallback        → nœud "external:module" si non résolu (pour les stats)
-
-GRAPHE ENRICHI :
-  • Arêtes typées : "imports" | "defined_in" | "external_dep"
-  • Nœuds externes (bibliothèques tierces) comptabilisés mais non analysés
-  • _build_nodes() et _build_edges() identiques à l'original (rétro-compatibles)
-  • analyze_flows() inchangé → project_analyzer.py continue de fonctionner
-
-PERFORMANCES :
-  • Cache de résolution (évite de recalculer le même import deux fois)
-  • Index nom_module → fichier construit une seule fois au démarrage
-  • reset() pour réinitialiser proprement entre deux builds
-
-Tous les modules qui importent dependency_graph.py fonctionnent sans modification.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -40,9 +13,7 @@ from code_parser import parser, CodeEntity, ImportStatement
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DATA CLASS (inchangé pour rétro-compatibilité)
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class DependencyNode:
@@ -59,22 +30,7 @@ class DependencyNode:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MultiStrategyImportResolver:
-    """
-    Résout un ImportStatement vers un fichier existant du projet.
-
-    Stratégies appliquées dans l'ordre :
-      1. Cache  — résultat déjà calculé
-      2. Python relatif  (from .module / from ..pkg.module)
-      3. Python absolu   (from config import X  →  project_root/config.py)
-      4. JavaScript/TS   (import from './utils'  →  utils.js / utils/index.js)
-      5. CommonJS        (require('../lib')       →  idem JS)
-      6. Java            (import com.example.Foo  →  src/main/java/com/example/Foo.java)
-      7. Index module    — mapping nom_court → fichier (ex: "utils" → utils.py)
-
-    Retour :
-      str  — chemin absolu résolu        (fichier du projet)
-      None — import externe / non résolu
-    """
+    
 
     # Extensions candidates dans l'ordre de priorité (JS/TS)
     JS_EXTENSIONS = [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]
@@ -393,7 +349,7 @@ class MultiStrategyImportResolver:
         self._stats["unresolved"] += 1
         return None
 
-    # ── Java ──────────────────────────────────────────────────────────────────
+    
 
     def _resolve_java(self, module: str) -> Optional[str]:
         """
@@ -420,11 +376,11 @@ class MultiStrategyImportResolver:
             self._stats["unresolved"] += 1
             return None
 
-        # Convertir en chemin : com.example.UserService → com/example/UserService
+        
         parts = module.split(".")
         rel_path = Path(*parts).with_suffix(".java")
 
-        # Racines candidates pour le source Java
+     
         java_roots = [
             self.project_root / "src" / "main" / "java",
             self.project_root / "src" / "test" / "java",
@@ -440,7 +396,7 @@ class MultiStrategyImportResolver:
                     self._stats["resolved_java"] += 1
                     return resolved
 
-        # Fallback : chercher juste le nom de classe dans tout le projet
+        
         class_name = parts[-1]
         found = self._resolve_by_index(class_name.lower())
         if found and found.endswith(".java"):
@@ -450,7 +406,7 @@ class MultiStrategyImportResolver:
         self._stats["unresolved"] += 1
         return None
 
-    # ── Index générique ───────────────────────────────────────────────────────
+  
 
     def _resolve_by_index(self, module: str) -> Optional[str]:
         """
