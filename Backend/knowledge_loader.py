@@ -479,6 +479,307 @@ class KnowledgeBaseLoader:
 
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ProjectCodeIndexer — Changement 1
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ProjectCodeIndexer:
+    """
+    Indexe le code source du projet dans une collection ChromaDB séparée.
+
+    Deux collections ChromaDB dans le système :
+      code_kb_jina_v2    ← KnowledgeBaseLoader  (règles génériques dans les .md)
+      project_code_index ← ProjectCodeIndexer   (code RÉEL du projet, méthode par méthode)
+
+    Pourquoi une collection séparée ?
+      La KB de règles explique COMMENT corriger un problème (générique).
+      project_code_index montre comment TON projet gère les mêmes patterns.
+      Exemple : UserService.java a un resource leak sur Statement.
+        → KB retourne : "utilise try-with-resources" (règle générique)
+        → project_code_index retourne : findByUsername() dans UserRepository.java
+          qui a exactement le même problème → le LLM voit que c'est systémique.
+
+    Cycle de vie :
+      1. initialize() dans IncrementalAnalyzer → index_project() une seule fois
+      2. À chaque Ctrl+S → index_file() remplace les chunks du fichier sauvegardé
+         → la collection reste toujours synchronisée avec le projet
+
+    Réutilise les embeddings de assistant_agent (déjà chargés en mémoire).
+    Pas de double chargement du modèle Jina.
+    """
+
+    COLLECTION_NAME = "project_code_index"
+
+    # Extensions de fichiers à indexer
+    CODE_EXTENSIONS = {".py", ".java", ".js", ".ts", ".jsx", ".tsx"}
+
+    # Dossiers à ignorer
+    EXCLUDED_DIRS = {
+        "__pycache__", ".git", "node_modules", ".venv", "venv",
+        "dist", "build", "target", ".idea", ".vscode",
+    }
+
+    def __init__(self, embeddings):
+        """
+        Args:
+            embeddings : HuggingFaceEmbeddings déjà initialisé dans assistant_agent.
+                         Réutilisation directe — évite de recharger Jina (2-3 Go RAM).
+        """
+        import threading
+        self._embeddings = embeddings
+        self._store: Chroma | None = None
+        self._lock = threading.Lock()   # protège _store contre les accès concurrents
+        self._splitter = RecursiveCharacterTextSplitter(
+            chunk_size    = 500,
+            chunk_overlap = 60,
+            separators    = ["\n\n", "\n", " ", ""],
+        )
+
+    def _get_store(self) -> Chroma:
+        # Double-checked locking — thread-safe sans verrouiller à chaque appel
+        if self._store is None:
+            with self._lock:
+                if self._store is None:
+                    # Répertoire SÉPARÉ de la KB principale (code_kb_jina_v2).
+                    # Sur Windows, ChromaDB utilise SQLite — deux collections dans
+                    # le même répertoire partagent le même fichier .db → verrou partagé
+                    # → blocage garanti quand les deux écrivent simultanément.
+                    project_store_dir = config.VECTOR_STORE_DIR.parent / "project_code_store"
+                    project_store_dir.mkdir(parents=True, exist_ok=True)
+                    self._store = Chroma(
+                        persist_directory  = str(project_store_dir),
+                        embedding_function = self._embeddings,
+                        collection_name    = self.COLLECTION_NAME,
+                    )
+        return self._store
+
+    # ── Indexation initiale du projet ─────────────────────────────────────────
+
+    def index_project(self, project_path: Path, force: bool = False) -> int:
+        """
+        Indexe tous les fichiers du projet au démarrage.
+        Skip si la collection est déjà peuplée (sauf si force=True).
+
+        Appelé une seule fois dans IncrementalAnalyzer.initialize().
+
+        Returns:
+            Nombre de chunks indexés (0 si déjà peuplé et force=False).
+        """
+        store = self._get_store()
+        existing = store._collection.count()
+
+        if existing > 0 and not force:
+            logger.info(
+                "project_code_index déjà peuplé (%d chunks) — skip indexation initiale.",
+                existing,
+            )
+            return existing
+
+        if force and existing > 0:
+            store._collection.delete(where={"collection": {"$eq": "project_code"}})
+            logger.info("project_code_index vidé pour réindexation.")
+
+        # Scanner et indexer tous les fichiers
+        files = self._scan_project(project_path)
+        logger.info("ProjectCodeIndexer : %d fichiers à indexer...", len(files))
+
+        total = 0
+        for file_path in files:
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                if content.strip():
+                    n = self._do_index_file(file_path, content, entities=[])
+                    total += n
+            except Exception as e:
+                logger.debug("Erreur indexation %s : %s", file_path.name, e)
+
+        logger.info("ProjectCodeIndexer : %d chunks indexés.", total)
+        return total
+
+    # ── Mise à jour incrémentale (appelée à chaque Ctrl+S) ───────────────────
+
+    def index_file(
+        self,
+        file_path: Path,
+        content:   str,
+        entities:  list,
+    ) -> int:
+        """
+        Réindexe un fichier après modification.
+        Appelé automatiquement dans IncrementalAnalyzer._analyze_file() à l'ÉTAPE 4.5.
+
+        Fix Windows ChromaDB : toute l'opération est wrappée dans un try/except global.
+        Sur Windows, SQLite (backend ChromaDB) peut verrouiller la DB juste après
+        index_project() → la suppression bloquerait tout le pipeline.
+        Si ChromaDB est occupé on retourne 0 silencieusement — le pipeline continue.
+        """
+        try:
+            store = self._get_store()
+
+            # Supprimer l'ancienne version — non bloquant grâce au try/except global
+            try:
+                store._collection.delete(
+                    where={"source_file": {"$eq": file_path.name}}
+                )
+            except Exception:
+                # ChromaDB verrouillé ou collection vide → on continue sans supprimer
+                pass
+
+            return self._do_index_file(file_path, content, entities)
+
+        except Exception as e:
+            logger.debug("ProjectCodeIndexer.index_file() ignoré pour %s : %s", file_path.name, e)
+            return 0
+
+    def _do_index_file(
+        self,
+        file_path: Path,
+        content:   str,
+        entities:  list,
+    ) -> int:
+        """
+        Logique d'indexation commune à index_project() et index_file().
+        """
+        store    = self._get_store()
+        language = file_path.suffix.lstrip(".").lower()
+        docs: list[Document] = []
+        lines = content.splitlines()
+
+        # ── Stratégie 1 : découpe par méthode (si entités disponibles) ────────
+        method_entities = [
+            e for e in entities
+            if (e.get("type") if isinstance(e, dict) else getattr(e, "type", ""))
+            in ("method", "function", "class")
+        ]
+
+        if method_entities:
+            for entity in method_entities:
+                # Compatibilité dict (project_indexer) et objet (code_parser)
+                if isinstance(entity, dict):
+                    name       = entity.get("name", "")
+                    etype      = entity.get("type", "method")
+                    start_line = entity.get("start_line", 1)
+                    end_line   = entity.get("end_line", start_line + 10)
+                    params     = entity.get("parameters", [])
+                else:
+                    name       = getattr(entity, "name", "")
+                    etype      = getattr(entity, "type", "method")
+                    start_line = getattr(entity, "start_line", 1)
+                    end_line   = getattr(entity, "end_line", start_line + 10)
+                    params     = getattr(entity, "parameters", [])
+
+                method_code = "\n".join(lines[start_line - 1 : end_line])
+                if len(method_code.strip()) < 15:
+                    continue
+
+                docs.append(Document(
+                    page_content = method_code,
+                    metadata     = {
+                        "source_file":  file_path.name,
+                        "source_path":  str(file_path),
+                        "entity_name":  name,
+                        "entity_type":  etype,
+                        "parameters":   ", ".join(params[:6]) if params else "",
+                        "language":     language,
+                        "start_line":   str(start_line),
+                        "collection":   "project_code",
+                    },
+                ))
+
+        # ── Stratégie 2 : découpe générique (fallback) ────────────────────────
+        else:
+            chunks = self._splitter.split_text(content)
+            for i, chunk in enumerate(chunks):
+                if len(chunk.strip()) < 15:
+                    continue
+                docs.append(Document(
+                    page_content = chunk,
+                    metadata     = {
+                        "source_file": file_path.name,
+                        "source_path": str(file_path),
+                        "entity_name": "",
+                        "entity_type": "chunk",
+                        "language":    language,
+                        "chunk_index": str(i),
+                        "collection":  "project_code",
+                    },
+                ))
+
+        if not docs:
+            return 0
+
+        # Ingestion par lots de 20
+        for i in range(0, len(docs), 20):
+            store.add_documents(docs[i : i + 20])
+
+        return len(docs)
+
+    # ── Recherche ─────────────────────────────────────────────────────────────
+
+    def search(
+        self,
+        query:        str,
+        k:            int   = 4,
+        exclude_file: str   = "",
+        threshold:    float = 0.75,
+    ) -> list:
+        """
+        Cherche du code similaire dans le projet.
+
+        Args:
+            query        : code ou description du pattern recherché
+            k            : nombre de résultats max
+            exclude_file : nom de fichier à exclure (évite l'autoréférence)
+            threshold    : score cosinus max (plus bas = plus similaire)
+
+        Returns:
+            Liste de (Document, score) triée par score croissant.
+        """
+        store   = self._get_store()
+        results = store.similarity_search_with_score(query, k=k * 2)
+
+        filtered = [
+            (doc, score) for doc, score in results
+            if score <= threshold
+            and doc.metadata.get("source_file", "") != exclude_file
+        ]
+        filtered.sort(key=lambda x: x[1])
+        return filtered[:k]
+
+    # ── Stats ─────────────────────────────────────────────────────────────────
+
+    def print_stats(self) -> None:
+        """Affiche les statistiques de la collection project_code_index."""
+        store = self._get_store()
+        total = store._collection.count()
+        print(f"\n  project_code_index : {total} chunks de code projet")
+        if total > 0:
+            results  = store._collection.get(include=["metadatas"])
+            metas    = results.get("metadatas", [])
+            from collections import Counter
+            by_file  = Counter(m.get("source_file", "?") for m in metas)
+            by_lang  = Counter(m.get("language",    "?") for m in metas)
+            print(f"  Langages : {dict(by_lang)}")
+            print(f"  Fichiers ({len(by_file)}) :")
+            for fname, count in sorted(by_file.items()):
+                print(f"    {fname:<40} {count:>3} chunks")
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _scan_project(self, project_path: Path) -> list[Path]:
+        """Scanne récursivement le projet en ignorant les dossiers exclus."""
+        files = []
+        for f in project_path.rglob("*"):
+            if not f.is_file():
+                continue
+            if f.suffix.lower() not in self.CODE_EXTENSIONS:
+                continue
+            if any(part in self.EXCLUDED_DIRS for part in f.parts):
+                continue
+            files.append(f)
+        return sorted(files)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Charge la knowledge base dans ChromaDB",
